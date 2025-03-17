@@ -118,7 +118,7 @@ async fn main() {
         .expect("Failed to read line");
 
     let accounts = Arc::new(accounts);
-    loop_transfers(accounts.clone(), 200, 50).await;
+    loop_transfers(accounts.clone(), 2000, 50).await;
 }
 
 pub async fn loop_transfers(
