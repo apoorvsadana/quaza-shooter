@@ -32,6 +32,7 @@ impl AccountManager {
         private_key: Felt,
         address: &Felt,
         initial_nonce: u64,
+        execution_encoding: ExecutionEncoding,
     ) -> Self {
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(private_key));
         Self {
@@ -40,7 +41,7 @@ impl AccountManager {
                 signer,
                 *address,
                 CHAIN_ID,
-                ExecutionEncoding::New,
+                execution_encoding,
             )),
             nonce: Arc::new(AtomicU64::new(initial_nonce)),
         }
@@ -146,7 +147,7 @@ impl AccountManager {
         match self
             .account
             .execute_v1(vec![call])
-            .max_fee(MAX_FEE)
+            .max_fee(Felt::ZERO)
             .nonce(nonce.into())
             .send()
             .await

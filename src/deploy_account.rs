@@ -28,7 +28,7 @@ pub async fn deploy_account(
 ) -> Result<Felt, Box<dyn Error>> {
     let deploy = account_factory
         .deploy_v1(salt)
-        .max_fee(MAX_FEE)
+        .max_fee(Felt::ZERO)
         .nonce(Felt::ZERO);
 
     let result = deploy.send().await?;
