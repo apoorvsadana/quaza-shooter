@@ -151,7 +151,7 @@ async fn main() {
         .expect("Failed to read line");
 
     let accounts = Arc::new(accounts);
-    loop_transfers(accounts.clone(), 500, 100, erc20_address).await;
+    loop_transfers(accounts.clone(), 500, 100000, erc20_address).await;
 }
 
 pub async fn loop_transfers_tokio(
@@ -162,6 +162,8 @@ pub async fn loop_transfers_tokio(
 ) {
 }
 
+// Every iteration does a transfer from all accounts
+// Concurrency is the number of transfers done in parallel when sending one iteration
 pub async fn loop_transfers(
     accounts: Arc<Vec<AccountManager>>,
     concurrency: usize,
@@ -176,18 +178,12 @@ pub async fn loop_transfers(
         total_accounts, num_iterations
     );
 
-    let all_transfers = {
-        let mut transfers = Vec::with_capacity(total_accounts * num_iterations);
+    let mut all_transfers = Vec::new();
 
-        for iteration in 0..num_iterations {
-            for sender_idx in 0..total_accounts {
-                let recipient_idx = (sender_idx + offset) % total_accounts;
-                transfers.push((sender_idx, recipient_idx, iteration));
-            }
-        }
-
-        transfers
-    };
+    for sender_idx in 0..total_accounts {
+        let recipient_idx = (sender_idx + offset) % total_accounts;
+        all_transfers.push((sender_idx, recipient_idx));
+    }
 
     println!("Prepared {} total transfers", all_transfers.len());
 
@@ -195,11 +191,11 @@ pub async fn loop_transfers(
     let mut failed_count = 0;
     let start_time = std::time::Instant::now();
 
-    let total_transfers = all_transfers.len();
+    let total_transfers = num_iterations * total_accounts;
     for batch_idx in 0..((total_transfers + concurrency - 1) / concurrency) {
-        let start_idx = batch_idx * concurrency;
+        let start_idx = batch_idx * concurrency % all_transfers.len();
         let end_idx = std::cmp::min(start_idx + concurrency, total_transfers);
-        let batch: &[(usize, usize, usize)] = &all_transfers[start_idx..end_idx];
+        let batch: &[(usize, usize)] = &all_transfers[start_idx..end_idx];
 
         let chunk_start = std::time::Instant::now();
         println!(
@@ -209,11 +205,10 @@ pub async fn loop_transfers(
             batch.len()
         );
 
-        let futures = batch.iter().map(|(sender_idx, recipient_idx, iteration)| {
+        let futures = batch.iter().map(|(sender_idx, recipient_idx)| {
             let accounts = accounts.clone();
             let s_idx = *sender_idx;
             let r_idx = *recipient_idx;
-            let iter = *iteration;
 
             async move {
                 let sender = &accounts[s_idx];
@@ -232,26 +227,28 @@ pub async fn loop_transfers(
                     Ok(tx_hash) => {
                         println!(
                             "✅ Iter {} | {}->{}: tx {:#064x}",
-                            iter + 1,
-                            s_idx,
-                            r_idx,
-                            tx_hash
+                            batch_idx, s_idx, r_idx, tx_hash
                         );
-                        Ok((s_idx, r_idx, iter))
+                        Ok((s_idx, r_idx))
                     }
                     Err(e) => {
-                        eprintln!("❌ Iter {} | {}->{}: erreur: {}", iter + 1, s_idx, r_idx, e);
+                        eprintln!(
+                            "❌ Iter {} | {}->{}: erreur: {}",
+                            batch_idx + 1,
+                            s_idx,
+                            r_idx,
+                            e
+                        );
                         Err(e)
                     }
                 }
             }
         });
 
-        let results: Vec<Result<(usize, usize, usize), Box<dyn Error>>> =
-            futures::stream::iter(futures)
-                .buffer_unordered(concurrency)
-                .collect()
-                .await;
+        let results: Vec<Result<(usize, usize), Box<dyn Error>>> = futures::stream::iter(futures)
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
 
         let batch_success = results.iter().filter(|r| r.is_ok()).count();
         let batch_failed = results.len() - batch_success;
